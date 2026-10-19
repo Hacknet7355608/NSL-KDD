@@ -1,5 +1,7 @@
 # NSL-KDD ｜ 网络入侵检测系统
 
+**中文** ｜ [English](README.en.md)
+
 输入一条网络连接的特征（协议类型、字节数、错误率等），输出它属于
 `normal` / `DoS` / `Probe` / `R2L` / `U2R` 中的哪一类。
 
