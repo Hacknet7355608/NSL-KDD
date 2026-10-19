@@ -1,0 +1,7 @@
+{
+  "run_name": "baseline",
+  "n_estimators": 20,
+  "max_depth": 5,
+  "promote": false,
+  "note": "基线：20 棵树、深度 5，故意欠拟合，用来看“最省事的模型”能到多少"
+}

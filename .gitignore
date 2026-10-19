@@ -1,0 +1,23 @@
+﻿# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# 密钥与本地配置
+.env
+*.env.local
+
+# MLflow 本地记录（体积大，且每人一份）
+mlruns/
+
+# 个人工作稿 / PDF 原文提取件（不进仓库）
+docs/_source/
+
+# 注意：data/ 下的大文件由 DVC 管理（dvc add 会自己生成 data/raw/.gitignore），
+# 这里不重复写规则，避免和 DVC 的忽略文件打架
