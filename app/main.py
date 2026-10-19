@@ -6,21 +6,21 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 
 from app.model import ModelNotReady, Predictor, load_predictor
 from app.schemas import ConnectionInput, ModelInfo, PredictionResponse
-
-DEFAULT_MODEL = Path("models/model.joblib")
-DEFAULT_META = Path("models/model_meta.json")
+from app.settings import get_settings, validate_for_env
 
 
 def create_app(model_path=None, meta_path=None) -> FastAPI:
-    model_file = Path(model_path or os.environ.get("MODEL_PATH", DEFAULT_MODEL)).resolve()
-    meta_file = Path(meta_path or os.environ.get("MODEL_META_PATH", DEFAULT_META)).resolve()
+    settings = get_settings()
+    validate_for_env(settings)
+
+    model_file = Path(model_path or settings.model_path).resolve()
+    meta_file = Path(meta_path or settings.model_meta_path).resolve()
 
     application = FastAPI(
         title="NSL-KDD 网络入侵检测 API",
@@ -28,7 +28,6 @@ def create_app(model_path=None, meta_path=None) -> FastAPI:
         description="输入一条网络连接的特征，输出 normal / DoS / Probe / R2L / U2R 五分类结果。",
     )
 
-    # 每个 app 自带一份缓存：测试里两个 client 互不影响，不需要清全局变量
     state = {"predictor": None}
 
     def get_predictor() -> Predictor:
@@ -46,13 +45,22 @@ def create_app(model_path=None, meta_path=None) -> FastAPI:
 
     @application.get("/health", tags=["meta"])
     def health() -> dict:
-        # 健康检查永远 200：容器要先能起来，才好排查到底是模型还是服务的问题
         try:
             get_predictor()
             loaded = True
         except HTTPException:
             loaded = False
         return {"status": "ok", "model_loaded": loaded}
+
+    @application.get("/config", tags=["meta"])
+    def config() -> dict:
+        """当前实例生效的配置摘要（脱敏）。
+
+        这是 12-Factor 的可视化证据：同一个镜像在 dev / staging / production
+        下运行，这里返回的 app_env 会不同，而镜像本身完全相同。
+        注意：只返回"密钥是否已配置"，绝不返回密钥本身。
+        """
+        return settings.safe_view()
 
     @application.get("/model-info", response_model=ModelInfo, tags=["meta"])
     def model_info() -> ModelInfo:
@@ -82,8 +90,6 @@ def create_app(model_path=None, meta_path=None) -> FastAPI:
         missing = [name for name in predictor.feature_names if name not in given]
         unexpected = [name for name in record.features if name not in expected]
         if missing or unexpected:
-            # 故意沿用 FastAPI 自己校验错误的 JSON 形状（detail 是一个列表，
-            # 每项带 loc/msg/type），这样前端和测试可以用同一套方式读错误
             detail = [
                 {
                     "loc": ["body", "features", name],
