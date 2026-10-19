@@ -1,0 +1,31 @@
+# 提交前自动跑一遍与 CI 相同的检查（对应课件 6-Automated Software Quality 第 8~10 页）
+#
+# 安装（每个开发者本地做一次）：
+#   pip install -r requirements-dev.txt
+#   pre-commit install
+#
+# 手动全量跑一次：
+#   pre-commit run --all-files
+#
+# 说明：这里用的 ruff 版本必须与 requirements-dev.txt 里 pin 的版本一致，
+# 否则会出现"本地过了、CI 红"的版本漂移问题。
+
+repos:
+  # Linter + Formatter：与 CI 的 ruff check / ruff format --check 完全同一套规则
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.1
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # 通用卫生检查：能拦住很多"本地看不出来、CI 才红"的低级问题
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: end-of-file-fixer # 文件末尾恰好一个换行（Dockerfile/README 都适用）
+      - id: trailing-whitespace # 去掉行尾空格
+      - id: check-yaml # .github/workflows/ci.yml 缩进错了会在这里就报
+      - id: check-added-large-files
+        args: [--maxkb=2048] # 防误提交大文件（模型 1.2MB 可通过）
+      - id: check-merge-conflict # 防把 <<<<<<< 提交上去
