@@ -1,19 +1,108 @@
-"""FastAPI 入口（占位实现）。
-
-真实业务代码到位后，用正式实现整体覆盖本文件即可，但请保留两个约定：
-
-1. 模块内存在名为 ``app`` 的 ASGI 对象 —— Dockerfile 的
-   ``uvicorn app.main:app`` 依赖它；
-2. ``GET /health`` 返回 HTTP 200 —— Dockerfile 的 HEALTHCHECK 与
-   CI 的容器冒烟脚本都打这个探针。
+"""FastAPI 服务入口。
+沿用实验里的 create_app() 工厂写法：
+    app = create_app(模型路径, 元数据路径)
+测试传临时模型，线上用环境变量或默认的 models/ 目录，互不干扰。
 """
 
-from fastapi import FastAPI
+from __future__ import annotations
 
-app = FastAPI(title="NSL-KDD", version="0.1.0")
+import os
+from pathlib import Path
+
+from fastapi import FastAPI, HTTPException
+
+from app.model import ModelNotReady, Predictor, load_predictor
+from app.schemas import ConnectionInput, ModelInfo, PredictionResponse
+
+DEFAULT_MODEL = Path("models/model.joblib")
+DEFAULT_META = Path("models/model_meta.json")
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    """存活探针，供 Docker HEALTHCHECK 与 CI 冒烟测试使用。"""
-    return {"status": "ok"}
+def create_app(model_path=None, meta_path=None) -> FastAPI:
+    model_file = Path(model_path or os.environ.get("MODEL_PATH", DEFAULT_MODEL)).resolve()
+    meta_file = Path(meta_path or os.environ.get("MODEL_META_PATH", DEFAULT_META)).resolve()
+
+    application = FastAPI(
+        title="NSL-KDD 网络入侵检测 API",
+        version="1.0.0",
+        description="输入一条网络连接的特征，输出 normal / DoS / Probe / R2L / U2R 五分类结果。",
+    )
+
+    # 每个 app 自带一份缓存：测试里两个 client 互不影响，不需要清全局变量
+    state = {"predictor": None}
+
+    def get_predictor() -> Predictor:
+        """第一次请求时加载模型；加载失败抛 503，而不是让整个进程起不来。"""
+        if state["predictor"] is None:
+            try:
+                state["predictor"] = load_predictor(model_file, meta_file)
+            except ModelNotReady as exc:
+                raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return state["predictor"]
+
+    @application.get("/", tags=["meta"])
+    def root() -> dict:
+        return {"service": "nsl-kdd", "version": application.version, "docs": "/docs"}
+
+    @application.get("/health", tags=["meta"])
+    def health() -> dict:
+        # 健康检查永远 200：容器要先能起来，才好排查到底是模型还是服务的问题
+        try:
+            get_predictor()
+            loaded = True
+        except HTTPException:
+            loaded = False
+        return {"status": "ok", "model_loaded": loaded}
+
+    @application.get("/model-info", response_model=ModelInfo, tags=["meta"])
+    def model_info() -> ModelInfo:
+        predictor = get_predictor()
+        meta = predictor.meta
+        return ModelInfo(
+            n_features=len(predictor.feature_names),
+            classes=predictor.classes,
+            feature_names=list(predictor.feature_names),
+            mlflow_run_id=str(meta.get("mlflow_run_id", "unknown")),
+            data_version=str(meta.get("data_version", "unknown")),
+            trained_at=str(meta.get("trained_at", "unknown")),
+            categorical_encodings=meta.get("categorical_encodings", {}),
+        )
+
+    @application.get("/sample", tags=["predict"])
+    def sample() -> dict:
+        """全 0 的合法输入：在 /docs 里一点就能试，不用手抄几十个字段。"""
+        predictor = get_predictor()
+        return {"features": {name: 0.0 for name in predictor.feature_names}}
+
+    @application.post("/predict", response_model=PredictionResponse, tags=["predict"])
+    def predict(record: ConnectionInput) -> dict:
+        predictor = get_predictor()
+        given = set(record.features)
+        expected = set(predictor.feature_names)
+        missing = [name for name in predictor.feature_names if name not in given]
+        unexpected = [name for name in record.features if name not in expected]
+        if missing or unexpected:
+            # 故意沿用 FastAPI 自己校验错误的 JSON 形状（detail 是一个列表，
+            # 每项带 loc/msg/type），这样前端和测试可以用同一套方式读错误
+            detail = [
+                {
+                    "loc": ["body", "features", name],
+                    "msg": "缺少特征",
+                    "type": "value_error.missing",
+                }
+                for name in missing
+            ] + [
+                {
+                    "loc": ["body", "features", name],
+                    "msg": "多余特征",
+                    "type": "value_error.extra",
+                }
+                for name in unexpected
+            ]
+            raise HTTPException(status_code=422, detail=detail)
+        return predictor.predict(record.features)
+
+    return application
+
+
+app = create_app()
