@@ -55,3 +55,8 @@ def test_non_json_body_returns_422(client):
         headers={"Content-Type": "application/json"},
     )
     assert response.status_code == 422
+
+
+def test_ci_demo_should_fail():
+    assert False, 'deliberate failure'
+
