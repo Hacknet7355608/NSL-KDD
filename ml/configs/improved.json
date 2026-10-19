@@ -1,0 +1,7 @@
+{
+  "run_name": "improved",
+  "n_estimators": 100,
+  "max_depth": 10,
+  "promote": true,
+  "note": "改进：100 棵树、深度 10（就是实验课里的第二组超参），训练完导出到 models/"
+}
